@@ -1,0 +1,9 @@
+To use this framewrok here are the requirement:
+
+In web.xml
+    +declare the frontServlet
+    +declare (as init) with param-name "controller-package"
+
+In lib
+    +put the FrontServlet.jar
+
