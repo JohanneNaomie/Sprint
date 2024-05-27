@@ -2,53 +2,56 @@ package mg.p16.Spring;
 
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.lang.reflect.Method;
+import java.net.URISyntaxException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
-
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
-import mg.p16.Spring.ControllerAnnotation;
-
 public class FrontServlet extends HttpServlet {
     private String controllerPackage;
-    private List<String> controllerNames;
-    private boolean scanned = false;
+    private Map<String, Mapping> urlMappings;
+    private Map<String, Mapping> unannotatedMethods;
 
     @Override
     public void init() throws ServletException {
-        // Retrieve the controller package initialization parameter
         this.controllerPackage = getServletConfig().getInitParameter("controller-package");
+        this.urlMappings = new HashMap<>();
+        this.unannotatedMethods = new HashMap<>();
+        scanControllersAndMapUrls(this.controllerPackage);
     }
 
     protected void processRequest(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
-        PrintWriter out = response.getWriter();
-        // Extract the requested JSP page name from the URL
-        String requestedPage = request.getPathInfo();
-        out.println("The Path to my Front Servlet:");
-        out.println("/WEB-INF/views/jsp" + requestedPage);
+        response.setContentType("text/html;charset=UTF-8");
+        try (PrintWriter out = response.getWriter()) {
+            String requestedPath = request.getPathInfo();
 
-        out.println("Scanner:");
-        out.println("package controlers:"+this.controllerPackage);
-        // Check if scanning has been performed
-        if (!scanned) {
-            out.println("Scanning ...");
-            // Scan controllers and set scanned to true
-            controllerNames = scanControllers(this.controllerPackage);
-            scanned = true;
+            Mapping mapping = urlMappings.get(requestedPath);
+            if (mapping != null) {
+                out.println("Requested URL Path: " + requestedPath + "\n");
+                out.println("Mapped to Class: " + mapping.getClassName()+ "\n");
+                out.println("Mapped to Method: " + mapping.getMethodName()+ "\n");
+            } else {
+                Mapping unannotatedMapping = unannotatedMethods.get(requestedPath);
+                if (unannotatedMapping != null) {
+                    out.println("Requested URL Path: " + requestedPath+ "\n");
+                    out.println("Mapped to Unannotated Method in Class: " + unannotatedMapping.getClassName()+ "\n");
+                    out.println("Mapped to Method: " + unannotatedMapping.getMethodName()+ "\n");
+                } else {
+                    out.println("No method associated with the path: " + requestedPath+ "\n");
+                }
+            }
         }
-
-        // Print the names of the controller classes
-        out.println("Controller classes:");
-        for (String controllerName : controllerNames) {
-            out.println(controllerName);
-        }
-
-        out.close();
     }
 
     @Override
@@ -68,70 +71,47 @@ public class FrontServlet extends HttpServlet {
         return "FrontServlet";
     }
 
-    public static List<String> scanControllers(String packageName) {
-        List<String> controllerNames = new ArrayList<>();
+    private void scanControllersAndMapUrls(String packageName) {
+        List<Class<?>> controllerClasses = scanControllers(packageName);
+        for (Class<?> controllerClass : controllerClasses) {
+            Method[] methods = controllerClass.getDeclaredMethods();
+            for (Method method : methods) {
+                if (method.isAnnotationPresent(GET.class)) {
+                    GET getAnnotation = method.getAnnotation(GET.class);
+                    String urlPath = getAnnotation.value();
+                    urlMappings.put(urlPath, new Mapping(controllerClass.getName(), method.getName()));
+                } else {
+                    // Assume the method name will be used as a URL path for unannotated methods
+                    String urlPath = "/" + method.getName();
+                    unannotatedMethods.put(urlPath, new Mapping(controllerClass.getName(), method.getName()));
+                }
+            }
+        }
+    }
 
+    public static List<Class<?>> scanControllers(String packageName) {
+        List<Class<?>> controllerClasses = new ArrayList<>();
         try {
-            // Get the class loader for the current class
             ClassLoader classLoader = FrontServlet.class.getClassLoader();
-
-            // Convert package name to directory path
             String packagePath = packageName.replace('.', '/');
-
-            // Get all resources (files and directories) within the package directory
             java.net.URL resource = classLoader.getResource(packagePath);
             if (resource != null) {
-                java.nio.file.Path packageDirectory = java.nio.file.Paths.get(resource.toURI());
-                java.io.File[] files = packageDirectory.toFile().listFiles();
-                
-                // Filter out class files and map them to class names
-                if (files != null) {
-                    controllerNames = java.util.Arrays.stream(files)
-                            .filter(file -> file.getName().endsWith(".class"))
-                            .map(file -> file.getName().replaceAll(".class$", ""))
-                            .collect(Collectors.toList());
+                Path packageDirectory = Paths.get(resource.toURI());
+                List<String> classNames = Files.walk(packageDirectory)
+                        .filter(Files::isRegularFile)
+                        .filter(file -> file.getFileName().toString().endsWith(".class"))
+                        .map(file -> packageName + "." + file.getFileName().toString().replace(".class", ""))
+                        .collect(Collectors.toList());
+                for (String className : classNames) {
+                    Class<?> clazz = Class.forName(className);
+                    if (clazz.isAnnotationPresent(ControllerAnnotation.class)) {
+                        controllerClasses.add(clazz);
+                    }
                 }
             }
-        } catch (java.net.URISyntaxException e) {
+        } catch (URISyntaxException | IOException | ClassNotFoundException e) {
             e.printStackTrace();
         }
-
-        return controllerNames;
+        return controllerClasses;
     }
-
-    public static String[] getClassNames(String packageName) {
-        // Get the class loader for the current class
-        ClassLoader classLoader = FrontServlet.class.getClassLoader();
-    
-        // Convert package name to directory path
-        String packagePath = packageName.replace('.', '/');
-    
-        // Get all resources (files and directories) within the package directory
-        java.net.URL resource = classLoader.getResource(packagePath);
-        if (resource != null) {
-            try {
-                java.nio.file.Path packageDirectory = java.nio.file.Paths.get(resource.toURI());
-                java.io.File[] files = packageDirectory.toFile().listFiles();
-    
-                // Filter out class files and map them to class names
-                if (files != null) {
-                    List<String> classNames = java.util.Arrays.stream(files)
-                            .filter(file -> file.getName().endsWith(".class"))
-                            .map(file -> {
-                                String fileName = file.getName();
-                                return packageName + "." + fileName.substring(0, fileName.lastIndexOf('.'));
-                            })
-                            .collect(Collectors.toList());
-    
-                    // Convert List to String array
-                    return classNames.toArray(new String[0]);
-                }
-            } catch (java.net.URISyntaxException e) {
-                e.printStackTrace();
-            }
-        }
-    
-        return new String[0]; // Return an empty array if no classes found
-    }
-
 }
