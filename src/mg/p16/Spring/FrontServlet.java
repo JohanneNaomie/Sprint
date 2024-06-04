@@ -2,6 +2,7 @@ package mg.p16.Spring;
 
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.URISyntaxException;
 import java.nio.file.Files;
@@ -51,12 +52,11 @@ public class FrontServlet extends HttpServlet {
             String requestedPath = request.getPathInfo();
 
             Mapping mapping = urlMappings.get(requestedPath);
+            if (mapping == null) {
+                mapping = unannotatedMethods.get(requestedPath);
+            }
+
             if (mapping != null) {
-<<<<<<< Updated upstream
-                out.println("Requested URL Path: " + requestedPath + "\n");
-                out.println("Mapped to Class: " + mapping.getClassName()+ "\n");
-                out.println("Mapped to Method: " + mapping.getMethodName()+ "\n");
-=======
                 out.println("Requested URL Path: " + requestedPath);
                 out.println("Mapped to Class: " + mapping.getClassName());
                 out.println("Mapped to Method: " + mapping.getMethodName());
@@ -91,16 +91,8 @@ public class FrontServlet extends HttpServlet {
                     out.println("Error while invoking method: " + e.getMessage());
                     e.printStackTrace(out);
                 }
->>>>>>> Stashed changes
             } else {
-                Mapping unannotatedMapping = unannotatedMethods.get(requestedPath);
-                if (unannotatedMapping != null) {
-                    out.println("Requested URL Path: " + requestedPath+ "\n");
-                    out.println("Mapped to Unannotated Method in Class: " + unannotatedMapping.getClassName()+ "\n");
-                    out.println("Mapped to Method: " + unannotatedMapping.getMethodName()+ "\n");
-                } else {
-                    out.println("No method associated with the path: " + requestedPath+ "\n");
-                }
+                out.println("No method associated with the path: " + requestedPath);
             }
         }
     }
