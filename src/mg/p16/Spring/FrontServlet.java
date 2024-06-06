@@ -57,9 +57,9 @@ public class FrontServlet extends HttpServlet {
             }
 
             if (mapping != null) {
-                out.println("Requested URL Path: " + requestedPath);
-                out.println("Mapped to Class: " + mapping.getClassName());
-                out.println("Mapped to Method: " + mapping.getMethodName());
+                out.println("<p>Requested URL Path: " + requestedPath+"</p>");
+                out.println("<p>Mapped to Class: " + mapping.getClassName()+"</p>");
+                out.println("<p>Mapped to Method: " + mapping.getMethodName()+"</p>");
                 
                 try {
                     // Load the class
