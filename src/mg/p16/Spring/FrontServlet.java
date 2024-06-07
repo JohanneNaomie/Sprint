@@ -13,6 +13,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import javax.servlet.RequestDispatcher;
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
@@ -29,11 +30,24 @@ public class FrontServlet extends HttpServlet {
         this.urlMappings = new HashMap<>();
         this.unannotatedMethods = new HashMap<>();
         scanControllersAndMapUrls(this.controllerPackage);
+
+        // Printing all mappings in urlMappings
+        System.out.println("URL Mappings:");
+        for (Map.Entry<String, Mapping> entry : urlMappings.entrySet()) {
+            System.out.println("URL: " + entry.getKey() + " -> Class: " + entry.getValue().getClassName() + ", Method: " + entry.getValue().getMethodName());
+        }
+
+        // Printing all methods in unannotatedMethods
+        System.out.println("Unannotated Methods:");
+        for (Map.Entry<String, Mapping> entry : unannotatedMethods.entrySet()) {
+            System.out.println("Class: " + entry.getKey() + " -> Methods: " + entry.getValue());
+        }
     }
 
     protected void processRequest(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
         response.setContentType("text/html;charset=UTF-8");
+        
         try (PrintWriter out = response.getWriter()) {
             String requestedPath = request.getPathInfo();
 
@@ -43,9 +57,9 @@ public class FrontServlet extends HttpServlet {
             }
 
             if (mapping != null) {
-                out.println("Requested URL Path: " + requestedPath);
-                out.println("Mapped to Class: " + mapping.getClassName());
-                out.println("Mapped to Method: " + mapping.getMethodName());
+                out.println("<p>Requested URL Path: " + requestedPath+"</p>");
+                out.println("<p>Mapped to Class: " + mapping.getClassName()+"</p>");
+                out.println("<p>Mapped to Method: " + mapping.getMethodName()+"</p>");
                 
                 try {
                     // Load the class
@@ -60,8 +74,19 @@ public class FrontServlet extends HttpServlet {
                     // Invoke the method and get the result
                     Object result = method.invoke(instance);
 
-                    // Print the result
-                    out.println("Result from invoked method: " + result);
+                    if (result instanceof String) {
+                        // If the result is a String, print it
+                        out.println("Result from invoked method: " + result);
+                    } else if (result instanceof ModelView) {
+                        // If the result is a ModelView, forward to the specified URL
+                        ModelView mv = (ModelView) result;
+                        for (Map.Entry<String, Object> entry : mv.getData().entrySet()) {
+                            request.setAttribute(entry.getKey(), entry.getValue());
+                        }
+                        RequestDispatcher dispatcher = request.getRequestDispatcher(mv.getUrl());
+                        dispatcher.forward(request, response);
+                        return;
+                    }
                 } catch (ClassNotFoundException | NoSuchMethodException | InstantiationException | IllegalAccessException | InvocationTargetException e) {
                     out.println("Error while invoking method: " + e.getMessage());
                     e.printStackTrace(out);
