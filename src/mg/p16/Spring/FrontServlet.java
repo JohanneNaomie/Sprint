@@ -18,82 +18,81 @@ import javax.servlet.ServletException;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
-
+import mg.p16.Spring.ResourceNotFoundException;
+import mg.p16.Spring.Scanner;
 public class FrontServlet extends HttpServlet {
     private String controllerPackage;
     private Map<String, Mapping> urlMappings;
-    private Map<String, Mapping> unannotatedMethods;
 
     @Override
     public void init() throws ServletException {
         this.controllerPackage = getServletConfig().getInitParameter("controller-package");
         this.urlMappings = new HashMap<>();
-        this.unannotatedMethods = new HashMap<>();
-        scanControllersAndMapUrls(this.controllerPackage);
 
+    }
+
+    protected void processRequest(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
+        response.setContentType("text/html;charset=UTF-8");
+        try {
+            this.urlMappings=Scanner.scanControllersAndMapUrls(this.controllerPackage, urlMappings);
+        } catch (PackageNotFoundException | MultipleMethodsException e) {
+            handleException(request, response, "ERROR: " + e.getMessage());
+            return;
+        }
+        
         // Printing all mappings in urlMappings
         System.out.println("URL Mappings:");
         for (Map.Entry<String, Mapping> entry : urlMappings.entrySet()) {
             System.out.println("URL: " + entry.getKey() + " -> Class: " + entry.getValue().getClassName() + ", Method: " + entry.getValue().getMethodName());
         }
 
-        // Printing all methods in unannotatedMethods
-        System.out.println("Unannotated Methods:");
-        for (Map.Entry<String, Mapping> entry : unannotatedMethods.entrySet()) {
-            System.out.println("Class: " + entry.getKey() + " -> Methods: " + entry.getValue());
-        }
-    }
-
-    protected void processRequest(HttpServletRequest request, HttpServletResponse response)
-            throws ServletException, IOException {
-        response.setContentType("text/html;charset=UTF-8");
-        
         try (PrintWriter out = response.getWriter()) {
             String requestedPath = request.getPathInfo();
+            System.out.println("Requested Path: " + requestedPath);
 
             Mapping mapping = urlMappings.get(requestedPath);
             if (mapping == null) {
-                mapping = unannotatedMethods.get(requestedPath);
+                throw new ResourceNotFoundException("No Method: " + requestedPath);
             }
 
-            if (mapping != null) {
-                out.println("<p>Requested URL Path: " + requestedPath+"</p>");
-                out.println("<p>Mapped to Class: " + mapping.getClassName()+"</p>");
-                out.println("<p>Mapped to Method: " + mapping.getMethodName()+"</p>");
-                
-                try {
-                    // Load the class
-                    Class<?> clazz = Class.forName(mapping.getClassName());
+            out.println("Requested URL Path: " + requestedPath);
+            out.println("Mapped to Class: " + mapping.getClassName());
+            out.println("Mapped to Method: " + mapping.getMethodName());
 
-                    // Create an instance of the class
-                    Object instance = clazz.getDeclaredConstructor().newInstance();
+            try {
+                // Load the class
+                Class<?> clazz = Class.forName(mapping.getClassName());
 
-                    // Get the method to invoke
-                    Method method = clazz.getDeclaredMethod(mapping.getMethodName());
+                // Create an instance of the class
+                Object instance = clazz.getDeclaredConstructor().newInstance();
 
-                    // Invoke the method and get the result
-                    Object result = method.invoke(instance);
+                // Get the method to invoke
+                Method method = clazz.getDeclaredMethod(mapping.getMethodName());
 
-                    if (result instanceof String) {
-                        // If the result is a String, print it
-                        out.println("Result from invoked method: " + result);
-                    } else if (result instanceof ModelView) {
-                        // If the result is a ModelView, forward to the specified URL
-                        ModelView mv = (ModelView) result;
-                        for (Map.Entry<String, Object> entry : mv.getData().entrySet()) {
-                            request.setAttribute(entry.getKey(), entry.getValue());
-                        }
-                        RequestDispatcher dispatcher = request.getRequestDispatcher(mv.getUrl());
-                        dispatcher.forward(request, response);
-                        return;
+                // Invoke the method and get the result
+                Object result = method.invoke(instance);
+
+                if (result instanceof String) {
+                    // If the result is a String, print it
+                    out.println("Result from invoked method: " + result);
+                } else if (result instanceof ModelView) {
+                    // If the result is a ModelView, forward to the specified URL
+                    ModelView mv = (ModelView) result;
+                    for (Map.Entry<String, Object> entry : mv.getData().entrySet()) {
+                        request.setAttribute(entry.getKey(), entry.getValue());
                     }
-                } catch (ClassNotFoundException | NoSuchMethodException | InstantiationException | IllegalAccessException | InvocationTargetException e) {
-                    out.println("Error while invoking method: " + e.getMessage());
-                    e.printStackTrace(out);
+                    RequestDispatcher dispatcher = request.getRequestDispatcher(mv.getUrl());
+                    dispatcher.forward(request, response);
+                    return;
                 }
-            } else {
-                out.println("No method associated with the path: " + requestedPath);
+            } catch (ClassNotFoundException e) {
+                handleException(request, response, "Method not found: " + e.getMessage());
+            } catch (InstantiationException | IllegalAccessException | InvocationTargetException  | NoSuchMethodException e) {
+                handleException(request, response, "Error while invoking method: " + e.getMessage());
             }
+        } catch (Exception e) {
+            handleException(request, response, "No method associated with the path: " + e.getMessage());
         }
     }
 
@@ -114,47 +113,9 @@ public class FrontServlet extends HttpServlet {
         return "FrontServlet";
     }
 
-    private void scanControllersAndMapUrls(String packageName) {
-        List<Class<?>> controllerClasses = scanControllers(packageName);
-        for (Class<?> controllerClass : controllerClasses) {
-            Method[] methods = controllerClass.getDeclaredMethods();
-            for (Method method : methods) {
-                if (method.isAnnotationPresent(GET.class)) {
-                    GET getAnnotation = method.getAnnotation(GET.class);
-                    String urlPath = getAnnotation.value();
-                    urlMappings.put(urlPath, new Mapping(controllerClass.getName(), method.getName()));
-                } else {
-                    // Assume the method name will be used as a URL path for unannotated methods
-                    String urlPath = "/" + method.getName();
-                    unannotatedMethods.put(urlPath, new Mapping(controllerClass.getName(), method.getName()));
-                }
-            }
-        }
-    }
-
-    public static List<Class<?>> scanControllers(String packageName) {
-        List<Class<?>> controllerClasses = new ArrayList<>();
-        try {
-            ClassLoader classLoader = FrontServlet.class.getClassLoader();
-            String packagePath = packageName.replace('.', '/');
-            java.net.URL resource = classLoader.getResource(packagePath);
-            if (resource != null) {
-                Path packageDirectory = Paths.get(resource.toURI());
-                List<String> classNames = Files.walk(packageDirectory)
-                        .filter(Files::isRegularFile)
-                        .filter(file -> file.getFileName().toString().endsWith(".class"))
-                        .map(file -> packageName + "." + file.getFileName().toString().replace(".class", ""))
-                        .collect(Collectors.toList());
-                for (String className : classNames) {
-                    Class<?> clazz = Class.forName(className);
-                    if (clazz.isAnnotationPresent(ControllerAnnotation.class)) {
-                        controllerClasses.add(clazz);
-                    }
-                }
-            }
-        } catch (URISyntaxException | IOException | ClassNotFoundException e) {
-            e.printStackTrace();
-        }
-        return controllerClasses;
+    public void handleException(HttpServletRequest request, HttpServletResponse response, String errorMessage) throws ServletException, IOException {
+        request.setAttribute("error", errorMessage);
+        RequestDispatcher dispatcher = request.getRequestDispatcher("/WEB-INF/views/error.jsp");
+        dispatcher.forward(request, response);
     }
 }
