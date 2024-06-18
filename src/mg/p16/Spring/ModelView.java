@@ -11,15 +11,15 @@ public class ModelView {
         this.data = new HashMap<>();
     }
 
+    public void addObject(String name, Object value) {
+        data.put(name, value);
+    }
+
     public String getUrl() {
         return url;
     }
 
     public HashMap<String, Object> getData() {
         return data;
-    }
-
-    public void add(String key, Object value) {
-        this.data.put(key, value);
     }
 }
