@@ -1,19 +1,27 @@
 package mg.p16.Spring;
 
 public class Mapping {
-    private String className;
-    private String methodName;
+    String className;
+    String methodeName;
 
-    public Mapping(String className, String methodName) {
+    public Mapping(String className, String methodeName) {
         this.className = className;
-        this.methodName = methodName;
+        this.methodeName = methodeName;
     }
 
     public String getClassName() {
         return className;
     }
 
-    public String getMethodName() {
-        return methodName;
+    public void setClassName(String className) {
+        this.className = className;
+    }
+
+    public String getMethodeName() {
+        return methodeName;
+    }
+
+    public void setMethodeName(String methodeName) {
+        this.methodeName = methodeName;
     }
 }
