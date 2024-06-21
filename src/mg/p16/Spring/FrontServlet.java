@@ -1,15 +1,19 @@
 package mg.p16.Spring;
+
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
+import java.lang.reflect.InvocationTargetException;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +24,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.lang.reflect.Method;
 
 public class FrontServlet extends HttpServlet {
     private String packageName; // Variable pour stocker le nom du package
@@ -80,8 +85,10 @@ public class FrontServlet extends HttpServlet {
                 }
 
                 // Inject parameters
-                Object[] parameters = getMethodParameters(method, request);
+                Object[] parameters = getMethodParameters(method, request,response); 
                 Object returnValue = method.invoke(object, parameters);
+                //invoke controller with the parameters
+                //so if it's gonna be showEmps((@RequestObject Employee user))
                 if (returnValue instanceof String) {
                     out.println("Methode trouvee dans " + (String) returnValue);
                 } else if (returnValue instanceof ModelView) {
@@ -168,18 +175,54 @@ public class FrontServlet extends HttpServlet {
         }
     }
 
-    private Object[] getMethodParameters(Method method, HttpServletRequest request) {
+    public Object[] getMethodParameters(Method method, HttpServletRequest request, HttpServletResponse response) throws Exception {
         Parameter[] parameters = method.getParameters();
         Object[] parameterValues = new Object[parameters.length];
-
+        PrintWriter out = response.getWriter();
+        Enumeration<String> parameterNames = request.getParameterNames();
         for (int i = 0; i < parameters.length; i++) {
-            if (parameters[i].isAnnotationPresent(Parametre.class)) {
-                Parametre param = parameters[i].getAnnotation(Parametre.class);
-                String paramValue = request.getParameter(param.value());
+            Parameter parameter = parameters[i];
+
+            if (parameter.isAnnotationPresent(Parametre.class)) {
+                Parametre param = parameter.getAnnotation(Parametre.class);
+                String paramName = param.value();//name= "" 
+                String paramValue = request.getParameter(paramName); //value=""
                 parameterValues[i] = paramValue; // Assuming all parameters are strings for simplicity
+
+            } else if (parameter.isAnnotationPresent(RequestObject.class)) {
+                String paramName = parameterNames.nextElement(); // Assuming parameterNames is an Enumeration<String> or similar
+                out.print("Parameter Name: " + paramName);
+
+                // Retrieve parameter value from request
+                Object valeur = request.getParameter(paramName);
+                out.print("valeur: "+valeur);
+                // Split paramName by dot to separate class name and attribute name
+                String[] parts = paramName.split("\\.");
+
+                // Load the class dynamically
+                Class<?> clazz = Class.forName(parts[0]);
+                out.print("className= "+parts[0]);
+                // Create an instance of the class
+                Object instance = clazz.getDeclaredConstructor().newInstance();
+
+                // Construct the setter method name (e.g., setName)
+                String attribute = parts[1].substring(0, 1).toUpperCase() + parts[1].substring(1);
+                String methodName = "set" + attribute;
+
+                // Find the setter method with the constructed name
+                Method methode = clazz.getMethod(methodName, String.class); // Adjust parameter type as needed
+
+                // Invoke the setter method on the instance with the parameter value
+                methode.invoke(instance, (String) valeur);
+
+                // Assign the instance to parameterValues array (assuming parameterValues is defined earlier)
+                parameterValues[i] = instance;
             }
         }
-
+        out.close();
         return parameterValues;
     }
+
+   
+
 }
