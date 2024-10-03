@@ -49,7 +49,7 @@ public class FrontServlet extends HttpServlet {
         }
     }
 
-    protected void processRequest(HttpServletRequest request, HttpServletResponse response)
+   protected void processRequest(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
         StringBuffer requestURL = request.getRequestURL();
         String[] requestUrlSplitted = requestURL.toString().split("/");
@@ -58,20 +58,27 @@ public class FrontServlet extends HttpServlet {
         if (!error.isEmpty()) {
             response.getWriter().println(error);
         } else if (!urlMapping.containsKey(controllerSearched)) {
-            response.getWriter().println("<p>No method related .</p>");
+            response.getWriter().println("<p>No method related.</p>");
         } else {
             try {
                 Mapping mapping = urlMapping.get(controllerSearched);
+                String methodVerb = mapping.getVerb();
+                String requestMethod = request.getMethod();
+
+                if (!requestMethod.equalsIgnoreCase(methodVerb)) {
+                    throw new Exception("Wrong method. Expected " + methodVerb + " but got " + requestMethod);
+                }
+
                 Class<?> clazz = Class.forName(mapping.getClassName());
                 Object object = clazz.getDeclaredConstructor().newInstance();
                 Method method = null;
 
                 for (Method m : clazz.getDeclaredMethods()) {
                     if (m.getName().equals(mapping.getMethodeName())) {
-                        if (request.getMethod().equalsIgnoreCase("GET") && m.isAnnotationPresent(GET.class)) {
+                        if (requestMethod.equalsIgnoreCase("GET") && m.isAnnotationPresent(GET.class)) {
                             method = m;
                             break;
-                        } else if (request.getMethod().equalsIgnoreCase("POST") && m.isAnnotationPresent(AnnotationPost.class)) {
+                        } else if (requestMethod.equalsIgnoreCase("POST") && m.isAnnotationPresent(AnnotationPost.class)) {
                             method = m;
                             break;
                         }
@@ -82,20 +89,16 @@ public class FrontServlet extends HttpServlet {
                     response.getWriter().println("<p>No Method Found</p>");
                     return;
                 }
-                // response.getWriter().println("<p>get method param</p>");
+
                 Object[] parameters = getMethodParameters(method, request, response);
-                // response.getWriter().println("<p>invoke </p>");
                 Object returnValue = method.invoke(object, parameters);
-                // response.getWriter().println("<p>invoked</p>");
-                // Check if the method is a REST API
+
                 if (method.isAnnotationPresent(Rest_Api.class)) {
-                    // Set the response content type to JSON
                     response.setContentType("application/json");
                     Gson gson = new Gson();
                     String jsonResponse = gson.toJson(returnValue);
                     response.getWriter().write(jsonResponse);
-                }
-                else if (returnValue instanceof String) {
+                } else if (returnValue instanceof String) {
                     response.getWriter().println("Méthode trouvée dans " + (String) returnValue);
                 } else if (returnValue instanceof ModelView) {
                     ModelView modelView = (ModelView) returnValue;
@@ -109,10 +112,11 @@ public class FrontServlet extends HttpServlet {
                 }
             } catch (Exception e) {
                 e.printStackTrace();
-                response.getWriter().println("<p>"+e.getMessage() +"</p><p>An exception came up during the transaction .</p>");
+                response.getWriter().println("<p>" + e.getMessage() + "</p><p>An exception came up during the transaction.</p>");
             }
         }
     }
+
 
     @Override
     protected void doGet(HttpServletRequest request, HttpServletResponse response)
@@ -149,7 +153,7 @@ public class FrontServlet extends HttpServlet {
 
                             for (Method method : methods) {
                                 if (method.isAnnotationPresent(GET.class)) {
-                                    Mapping map = new Mapping(className, method.getName());
+                                    Mapping map = new Mapping(className, method.getName(),"GET");
                                     String valeur = method.getAnnotation(GET.class).value();
                                     if (urlMapping.containsKey(valeur)) {
                                         throw new Exception("doublant url" + valeur);
@@ -157,7 +161,7 @@ public class FrontServlet extends HttpServlet {
                                         urlMapping.put(valeur, map);
                                     }
                                 } else if (method.isAnnotationPresent(AnnotationPost.class)) {
-                                    Mapping map = new Mapping(className, method.getName());
+                                    Mapping map = new Mapping(className, method.getName(),"POST");
                                     String valeur = method.getAnnotation(AnnotationPost.class).value();
                                     if (urlMapping.containsKey(valeur)) {
                                         throw new Exception("doublant" + valeur);
