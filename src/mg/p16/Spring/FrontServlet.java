@@ -41,7 +41,8 @@ public class FrontServlet extends HttpServlet {
         packageName = config.getInitParameter("packageControllerName");
         try {
             if (packageName == null || packageName.isEmpty()) {
-                throw new Exception("Package name not specified");
+                // 500 Internal Server Error - Package name not specified
+                throw new Exception("<p>500 Internal Server Error: Package name not specified in the servlet configuration.</p>");
             }
             scanControllers(packageName);
         } catch (Exception e) {
@@ -49,16 +50,19 @@ public class FrontServlet extends HttpServlet {
         }
     }
 
-   protected void processRequest(HttpServletRequest request, HttpServletResponse response)
+    protected void processRequest(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
         StringBuffer requestURL = request.getRequestURL();
         String[] requestUrlSplitted = requestURL.toString().split("/");
         String controllerSearched = requestUrlSplitted[requestUrlSplitted.length - 1];
 
         if (!error.isEmpty()) {
+            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR); // 500
             response.getWriter().println(error);
         } else if (!urlMapping.containsKey(controllerSearched)) {
-            response.getWriter().println("<p>No method related.</p>");
+            // 404 Not Found - No method matches the requested URL
+            response.setStatus(HttpServletResponse.SC_NOT_FOUND); // 404
+            response.getWriter().println("<p>404 Not Found: No method related to the requested URL.</p>");
         } else {
             try {
                 Mapping mapping = urlMapping.get(controllerSearched);
@@ -66,7 +70,9 @@ public class FrontServlet extends HttpServlet {
                 String requestMethod = request.getMethod();
 
                 if (!requestMethod.equalsIgnoreCase(methodVerb)) {
-                    throw new Exception("Wrong method. Expected " + methodVerb + " but got " + requestMethod);
+                    // 405 Method Not Allowed - HTTP method mismatch
+                    response.setStatus(HttpServletResponse.SC_METHOD_NOT_ALLOWED); // 405
+                    throw new Exception("<p>405 Method Not Allowed: Expected " + methodVerb + " but got " + requestMethod+ "</p>");
                 }
 
                 Class<?> clazz = Class.forName(mapping.getClassName());
@@ -75,7 +81,6 @@ public class FrontServlet extends HttpServlet {
 
                 for (Method m : clazz.getDeclaredMethods()) {
                     if (m.getName().equals(mapping.getVerbAction().getAction())) {
-
                         if (requestMethod.equalsIgnoreCase("GET") && m.isAnnotationPresent(GET.class)) {
                             method = m;
                             break;
@@ -87,7 +92,9 @@ public class FrontServlet extends HttpServlet {
                 }
 
                 if (method == null) {
-                    response.getWriter().println("<p>No Method Found</p>");
+                    // 404 Not Found - No method found in the controller class
+                    response.setStatus(HttpServletResponse.SC_NOT_FOUND); // 404
+                    response.getWriter().println("<p>404 Not Found: No matching method found in the controller class.</p>");
                     return;
                 }
 
@@ -100,7 +107,7 @@ public class FrontServlet extends HttpServlet {
                     String jsonResponse = gson.toJson(returnValue);
                     response.getWriter().write(jsonResponse);
                 } else if (returnValue instanceof String) {
-                    response.getWriter().println("Méthode trouvée dans " + (String) returnValue);
+                    response.getWriter().println("Method found in " + (String) returnValue);
                 } else if (returnValue instanceof ModelView) {
                     ModelView modelView = (ModelView) returnValue;
                     for (Map.Entry<String, Object> entry : modelView.getData().entrySet()) {
@@ -109,15 +116,18 @@ public class FrontServlet extends HttpServlet {
                     RequestDispatcher dispatcher = request.getRequestDispatcher(modelView.getUrl());
                     dispatcher.forward(request, response);
                 } else {
-                    response.getWriter().println("Data type not recognized");
+                    // 500 Internal Server Error - Unrecognized return type
+                    response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR); // 500
+                    response.getWriter().println("<p>500 Internal Server Error: Data type not recognized.</p>");
                 }
             } catch (Exception e) {
                 e.printStackTrace();
-                response.getWriter().println("<p>" + e.getMessage() + "</p><p>An exception came up during the transaction.</p>");
+                // 500 Internal Server Error - Exception occurred during request processing
+                response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR); // 500
+                response.getWriter().println("<p>500 Internal Server Error: " + e.getMessage() + "</p>");
             }
         }
     }
-
 
     @Override
     protected void doGet(HttpServletRequest request, HttpServletResponse response)
@@ -137,7 +147,8 @@ public class FrontServlet extends HttpServlet {
         URL resource = classLoader.getResource(path);
 
         if (resource == null) {
-            throw new Exception("Package non-existent: " + packageName);
+            // 500 Internal Server Error - Package not found
+            throw new Exception("</p> 500 Internal Server Error: Specified package does not exist: " + packageName+ "</p>");
         }
 
         Path classPath = Paths.get(resource.toURI());
@@ -154,20 +165,22 @@ public class FrontServlet extends HttpServlet {
 
                             for (Method method : methods) {
                                 if (method.isAnnotationPresent(GET.class)) {
-                                    VerbAction vb=new VerbAction(method.getName(),"GET");
-                                    Mapping map = new Mapping(className,vb );
+                                    VerbAction vb = new VerbAction(method.getName(), "GET");
+                                    Mapping map = new Mapping(className, vb);
                                     String valeur = method.getAnnotation(GET.class).value();
                                     if (urlMapping.containsKey(valeur)) {
-                                        throw new Exception("doublant url" + valeur);
+                                        // 500 Internal Server Error - Duplicate URL mapping for GET
+                                        throw new Exception("<p> 500 Internal Server Error: Duplicate URL mapping for GET: " + valeur+ "</p>");
                                     } else {
                                         urlMapping.put(valeur, map);
                                     }
                                 } else if (method.isAnnotationPresent(AnnotationPost.class)) {
-                                    VerbAction vb=new VerbAction(method.getName(),"GET");
+                                    VerbAction vb = new VerbAction(method.getName(), "POST");
                                     Mapping map = new Mapping(className, vb);
                                     String valeur = method.getAnnotation(AnnotationPost.class).value();
                                     if (urlMapping.containsKey(valeur)) {
-                                        throw new Exception("doublant" + valeur);
+                                        // 500 Internal Server Error - Duplicate URL mapping for POST
+                                        throw new Exception("<p> 500 Internal Server Error: Duplicate URL mapping for POST: " + valeur+ "</p>");
                                     } else {
                                         urlMapping.put(valeur, map);
                                     }
@@ -185,16 +198,16 @@ public class FrontServlet extends HttpServlet {
         Object[] parameterValues = new Object[parameters.length];
         Map<String, Object> objectInstances = new HashMap<>();
         Enumeration<String> parameterNames = request.getParameterNames();
-    
-        for (int i = 0; i < parameters.length; i++) { 
+
+        for (int i = 0; i < parameters.length; i++) {
             Parameter parameter = parameters[i];
-    
+
             if (parameter.isAnnotationPresent(Parametre.class)) {
                 Parametre param = parameter.getAnnotation(Parametre.class);
                 String paramName = param.value();
                 String paramValue = request.getParameter(paramName);
                 parameterValues[i] = paramValue;
-    
+
             } else if (parameter.isAnnotationPresent(RequestObject.class)) {
                 while (parameterNames.hasMoreElements()) {
                     String paramName = parameterNames.nextElement();
@@ -202,7 +215,7 @@ public class FrontServlet extends HttpServlet {
                         String[] parts = paramName.split("\\.");
                         String className = parts[0];
                         String attributeName = parts[1];
-    
+
                         String fullClassName = "mg.p16.models." + className;
                         Object instance = objectInstances.get(fullClassName);
                         if (instance == null) {
@@ -210,22 +223,21 @@ public class FrontServlet extends HttpServlet {
                             instance = clazz.getDeclaredConstructor().newInstance();
                             objectInstances.put(fullClassName, instance);
                         }
-    
+
                         String attribute = attributeName.substring(0, 1).toUpperCase() + attributeName.substring(1);
                         String methodName = "set" + attribute;
-    
+
                         Class<?> clazz = instance.getClass();
                         Method setterMethod = clazz.getMethod(methodName, String.class);
                         setterMethod.invoke(instance, request.getParameter(paramName));
-    
+
                         parameterValues[i] = instance;
                     }
                 }
-            }else if (parameter.getType().equals(MySession.class)) {
+            } else if (parameter.getType().equals(MySession.class)) {
                 parameterValues[i] = new MySession(request.getSession());
             }
         }
         return parameterValues;
     }
-    
 }
