@@ -1,13 +1,11 @@
 package mg.p16.Spring;
 public class Mapping {
     String className;
-    String methodeName;
-    String verb; // added for storing HTTP verb
+    VerbAction verbAction;
 
-    public Mapping(String className, String methodeName, String verb) {
+    public Mapping(String className, VerbAction vb) {
         this.className = className;
-        this.methodeName = methodeName;
-        this.verb = verb; // store HTTP verb
+        this.verbAction= vb;
     }
 
     public String getClassName() {
@@ -18,19 +16,11 @@ public class Mapping {
         this.className = className;
     }
 
-    public String getMethodeName() {
-        return methodeName;
+    public VerbAction getVerbAction() {
+        return verbAction;
     }
 
-    public void setMethodeName(String methodeName) {
-        this.methodeName = methodeName;
-    }
-
-    public String getVerb() {
-        return verb;
-    }
-
-    public void setVerb(String verb) {
-        this.verb = verb;
+    public void setVerbAction(VerbAction vb) {
+        this.verbAction = vb;
     }
 }

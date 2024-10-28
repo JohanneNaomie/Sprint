@@ -62,7 +62,7 @@ public class FrontServlet extends HttpServlet {
         } else {
             try {
                 Mapping mapping = urlMapping.get(controllerSearched);
-                String methodVerb = mapping.getVerb();
+                String methodVerb = mapping.getVerbAction().getVerb();
                 String requestMethod = request.getMethod();
 
                 if (!requestMethod.equalsIgnoreCase(methodVerb)) {
@@ -74,7 +74,8 @@ public class FrontServlet extends HttpServlet {
                 Method method = null;
 
                 for (Method m : clazz.getDeclaredMethods()) {
-                    if (m.getName().equals(mapping.getMethodeName())) {
+                    if (m.getName().equals(mapping.getVerbAction().getAction())) {
+
                         if (requestMethod.equalsIgnoreCase("GET") && m.isAnnotationPresent(GET.class)) {
                             method = m;
                             break;
@@ -153,7 +154,8 @@ public class FrontServlet extends HttpServlet {
 
                             for (Method method : methods) {
                                 if (method.isAnnotationPresent(GET.class)) {
-                                    Mapping map = new Mapping(className, method.getName(),"GET");
+                                    VerbAction vb=new VerbAction(method.getName(),"GET");
+                                    Mapping map = new Mapping(className,vb );
                                     String valeur = method.getAnnotation(GET.class).value();
                                     if (urlMapping.containsKey(valeur)) {
                                         throw new Exception("doublant url" + valeur);
@@ -161,7 +163,8 @@ public class FrontServlet extends HttpServlet {
                                         urlMapping.put(valeur, map);
                                     }
                                 } else if (method.isAnnotationPresent(AnnotationPost.class)) {
-                                    Mapping map = new Mapping(className, method.getName(),"POST");
+                                    VerbAction vb=new VerbAction(method.getName(),"GET");
+                                    Mapping map = new Mapping(className, vb);
                                     String valeur = method.getAnnotation(AnnotationPost.class).value();
                                     if (urlMapping.containsKey(valeur)) {
                                         throw new Exception("doublant" + valeur);
