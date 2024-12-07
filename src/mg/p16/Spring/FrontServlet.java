@@ -2,6 +2,7 @@ package mg.p16.Spring;
 
 import mg.p16.Spring.Rest_Api;
 
+
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.lang.reflect.Field;
@@ -56,24 +57,6 @@ public class FrontServlet extends HttpServlet {
 
     protected void processRequest(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
-
-        // // Print the mapping details
-        // PrintWriter out = response.getWriter();
-        // out.println("<h3>URL Mappings:</h3>");
-        // for (Map.Entry<String, Mapping> entry : urlMapping.entrySet()) {
-        //     String url = entry.getKey();
-        //     Mapping mapping = entry.getValue();
-        //     String className = mapping.getClassName();
-        //     String methodName = mapping.getVerbAction().getAction();
-        //     String httpMethod = mapping.getVerbAction().getVerb();
-            
-        //     out.println("<p>URL: " + url + "</p>");
-        //     out.println("<p>Controller Class: " + className + "</p>");
-        //     out.println("<p>Method: " + methodName + " (" + httpMethod.toUpperCase() + ")</p>");
-        //     out.println("<hr>");
-        // }
-        // out.close();
-
         // Check if the request is a multipart request
         boolean isMultipart = request.getContentType() != null && request.getContentType().startsWith("multipart/form-data");
         
@@ -117,15 +100,17 @@ public class FrontServlet extends HttpServlet {
 
                 Object[] parameters = getMethodParameters(method, request, response, isMultipart);
 
-                // for (int i = 0; i < parameters.length; i++) {
-                //     out.println("Parameter " + i + ": " + parameters[i] + " (" + parameter[i].getName() + ")");
-                // }
-
-
                 Object returnValue = method.invoke(object, parameters);//error
                 
 
                 handleReturnValue(returnValue,request, response);
+            }catch (MyValidationException e) {
+                response.setStatus(HttpServletResponse.SC_BAD_REQUEST); // 400
+                PrintWriter writer = response.getWriter();
+                writer.println("<p>400 Bad Request: Validation failed.</p>");
+                for (MyExceptions ex : e.getValidationErrors()) {
+                    writer.println("<p>Field: " + ex.getField() + " | Error: " + ex.getError() + " | Solution: " + ex.getSolution() + "</p>");
+                }
             } catch (Exception e) {
                 e.printStackTrace();
                 response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR); // 500
@@ -155,8 +140,8 @@ public class FrontServlet extends HttpServlet {
             for (Map.Entry<String, Object> entry : modelView.getData().entrySet()) {
                 request.setAttribute(entry.getKey(), entry.getValue());
             }
-            RequestDispatcher dispatcher = request.getRequestDispatcher(modelView.getUrl());
-            dispatcher.forward(request, response);
+            // RequestDispatcher dispatcher = request.getRequestDispatcher(modelView.getUrl());
+            // dispatcher.forward(request, response);
         } else {
             response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR); // 500
             response.getWriter().println("<p>500 Internal Server Error: Data type not recognized.</p>");
@@ -274,6 +259,33 @@ public class FrontServlet extends HttpServlet {
                         setterMethod.invoke(instance, request.getParameter(paramName));
 
                         parameterValues[i] = instance;
+
+                        // Validate the constructed object
+                        List<MyExceptions> validationErrors = validate(instance,response);
+
+                        // if (!validationErrors.isEmpty()) {
+                        //     throw new MyValidationException("Validation failed", validationErrors);
+                        // }
+
+                        PrintWriter out = response.getWriter();
+
+                        out.println("<html><body>");
+                        out.println("<h3>Validation Errors:</h3>");
+
+                        if (validationErrors.isEmpty()) {
+                            out.println("<p>No validation errors found.</p>");
+                        } else {
+                            out.println("<ul>");
+                            for (MyExceptions exception : validationErrors) {
+                                out.println("<li>");
+                                out.println("Field: " + exception.getField() + " - Error: " + exception.getError());
+                                out.println("</li>");
+                            }
+                            out.println("</ul>");
+                        }
+
+                        out.println("</body></html>");
+                        out.close();
                     }
                 }
             } else if (parameter.getType().equals(MySession.class)) {
@@ -286,5 +298,86 @@ public class FrontServlet extends HttpServlet {
         }
         return parameterValues;
     }
+    public static List<MyExceptions> validate(Object obj,HttpServletResponse response) throws Exception{
+        List<MyExceptions> errors = new ArrayList<>();
+
+        Field[] fields = obj.getClass().getDeclaredFields();
+        int i=0;
+        PrintWriter out = null;
+        for (Field field : fields) {
+
+            out.println(i);
+            
+            field.setAccessible(true);
+            try {
+                Object value = field.get(obj);
+                out = response.getWriter();
+
+                // Check @Min
+                Min min = field.getAnnotation(Min.class);
+                if (min != null && value instanceof Integer) {
+                    
+                    //it enters here 
+                    Integer intValue = (Integer) value;
+                    errors.add(new MyExceptions(field.getName(),intValue+"val","test exception ")); //works
+                    errors.add(new MyExceptions(field.getName(),intValue + "<"+ min.value(),"test exception "));
+
+                    out.println(intValue + "<"+ min.value());
+                    if (intValue < min.value()) {
+                        out.println("in min");
+                        //doesnt enter here after it has taken an exception from an annotation
+                        errors.add(new MyExceptions(field.getName(),
+                                "Value is less than minimum allowed.",
+                                "Provide a value >= " + min.value()));
+                    }
+                }
+
+                // Check @Max
+                Max max = field.getAnnotation(Max.class);
+                if (max != null && value instanceof Integer) {
+                    Integer intValue = (Integer) value;
+                    errors.add(new MyExceptions(field.getName(),intValue+"value","test exception "));
+                    errors.add(new MyExceptions(field.getName(),intValue + ">"+max.value(),"test exception "));
+
+                    out.println(intValue + "<"+ max.value());
+
+                    if (intValue > max.value()) {
+                        out.println("in max");
+                        errors.add(new MyExceptions(field.getName(),
+                                "Value is greater than maximum allowed.",
+                                "Provide a value <= " + max.value()));
+                    }
+                }
+
+                // Check @StartsWith
+                StartsWith startsWith = field.getAnnotation(StartsWith.class);
+                if (startsWith != null && value instanceof String) {
+                    String strValue = (String) value;
+                    errors.add(new MyExceptions(field.getName(),strValue,"test exception ")); //works
+                    errors.add(new MyExceptions(field.getName(),startsWith.value(),"test exception ")); //works
+                    out.println("starts with "+ startsWith.value());
+                    if (!strValue.startsWith(startsWith.value())) {
+                        out.println("in starts with");
+                        errors.add(new MyExceptions(field.getName(),
+                                "Value does not start with the required prefix.",
+                                "Provide a value starting with '" + startsWith.value() + "'"));//works 
+                    }
+                }
+                i++;  
+            } catch (IllegalAccessException e) {
+                errors.add(new MyExceptions(field.getName(),
+                        "Unable to access field value.",
+                        "Ensure the field is accessible."));
+            }
+            
+        }
+        if(out!=null){
+            out.close();
+        }
+        
+        return errors;
+    }
+
+
 
 }
