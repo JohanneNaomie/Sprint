@@ -22,6 +22,8 @@ import java.util.Map;
 
 import com.google.gson.Gson;
 
+import jakarta.servlet.http.Part;
+import jakarta.servlet.annotation.MultipartConfig;
 import jakarta.servlet.ServletConfig;
 import jakarta.servlet.RequestDispatcher;
 import jakarta.servlet.ServletException;
@@ -29,6 +31,8 @@ import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 //clarify 
+
+@MultipartConfig()
 public class FrontServlet extends HttpServlet {
     private String packageName;
     private static List<String> controllerNames = new ArrayList<>();
@@ -52,6 +56,32 @@ public class FrontServlet extends HttpServlet {
 
     protected void processRequest(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
+
+        // // Print the mapping details
+        // PrintWriter out = response.getWriter();
+        // out.println("<h3>URL Mappings:</h3>");
+        // for (Map.Entry<String, Mapping> entry : urlMapping.entrySet()) {
+        //     String url = entry.getKey();
+        //     Mapping mapping = entry.getValue();
+        //     String className = mapping.getClassName();
+        //     String methodName = mapping.getVerbAction().getAction();
+        //     String httpMethod = mapping.getVerbAction().getVerb();
+            
+        //     out.println("<p>URL: " + url + "</p>");
+        //     out.println("<p>Controller Class: " + className + "</p>");
+        //     out.println("<p>Method: " + methodName + " (" + httpMethod.toUpperCase() + ")</p>");
+        //     out.println("<hr>");
+        // }
+        // out.close();
+
+        // Check if the request is a multipart request
+        boolean isMultipart = request.getContentType() != null && request.getContentType().startsWith("multipart/form-data");
+        
+        if (isMultipart) {
+            // Handle multipart requests
+            request.setAttribute("jakarta.servlet.upload", true); // Indicate that this is a multipart request
+        }
+
         StringBuffer requestURL = request.getRequestURL();
         String[] requestUrlSplitted = requestURL.toString().split("/");
         String controllerSearched = requestUrlSplitted[requestUrlSplitted.length - 1];
@@ -60,7 +90,6 @@ public class FrontServlet extends HttpServlet {
             response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR); // 500
             response.getWriter().println(error);
         } else if (!urlMapping.containsKey(controllerSearched)) {
-            // 404 Not Found - No method matches the requested URL
             response.setStatus(HttpServletResponse.SC_NOT_FOUND); // 404
             response.getWriter().println("<p>404 Not Found: No method related to the requested URL.</p>");
         } else {
@@ -68,66 +97,72 @@ public class FrontServlet extends HttpServlet {
                 Mapping mapping = urlMapping.get(controllerSearched);
                 String methodVerb = mapping.getVerbAction().getVerb();
                 String requestMethod = request.getMethod();
+                
 
                 if (!requestMethod.equalsIgnoreCase(methodVerb)) {
-                    // 405 Method Not Allowed - HTTP method mismatch
                     response.setStatus(HttpServletResponse.SC_METHOD_NOT_ALLOWED); // 405
-                    throw new Exception("<p>405 Method Not Allowed: Expected " + methodVerb + " but got " + requestMethod+ "</p>");
+                    throw new Exception("<p>405 Method Not Allowed: Expected " + methodVerb + " but got " + requestMethod + "</p>");
                 }
 
                 Class<?> clazz = Class.forName(mapping.getClassName());
                 Object object = clazz.getDeclaredConstructor().newInstance();
-                Method method = null;
-
-                for (Method m : clazz.getDeclaredMethods()) {
-                    if (m.getName().equals(mapping.getVerbAction().getAction())) {
-                        if (requestMethod.equalsIgnoreCase("GET") && m.isAnnotationPresent(GET.class)) {
-                            method = m;
-                            break;
-                        } else if (requestMethod.equalsIgnoreCase("POST") && m.isAnnotationPresent(AnnotationPost.class)) {
-                            method = m;
-                            break;
-                        }
-                    }
-                }
+                Method method = findMethod(clazz, requestMethod, mapping.getVerbAction().getAction());
 
                 if (method == null) {
-                    // 404 Not Found - No method found in the controller class
                     response.setStatus(HttpServletResponse.SC_NOT_FOUND); // 404
                     response.getWriter().println("<p>404 Not Found: No matching method found in the controller class.</p>");
                     return;
                 }
+                
 
-                Object[] parameters = getMethodParameters(method, request, response);
-                Object returnValue = method.invoke(object, parameters);
+                Object[] parameters = getMethodParameters(method, request, response, isMultipart);
 
-                if (method.isAnnotationPresent(Rest_Api.class)) {
-                    response.setContentType("application/json");
-                    Gson gson = new Gson();
-                    String jsonResponse = gson.toJson(returnValue);
-                    response.getWriter().write(jsonResponse);
-                } else if (returnValue instanceof String) {
-                    response.getWriter().println("Method found in " + (String) returnValue);
-                } else if (returnValue instanceof ModelView) {
-                    ModelView modelView = (ModelView) returnValue;
-                    for (Map.Entry<String, Object> entry : modelView.getData().entrySet()) {
-                        request.setAttribute(entry.getKey(), entry.getValue());
-                    }
-                    RequestDispatcher dispatcher = request.getRequestDispatcher(modelView.getUrl());
-                    dispatcher.forward(request, response);
-                } else {
-                    // 500 Internal Server Error - Unrecognized return type
-                    response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR); // 500
-                    response.getWriter().println("<p>500 Internal Server Error: Data type not recognized.</p>");
-                }
+                // for (int i = 0; i < parameters.length; i++) {
+                //     out.println("Parameter " + i + ": " + parameters[i] + " (" + parameter[i].getName() + ")");
+                // }
+
+
+                Object returnValue = method.invoke(object, parameters);//error
+                
+
+                handleReturnValue(returnValue,request, response);
             } catch (Exception e) {
                 e.printStackTrace();
-                // 500 Internal Server Error - Exception occurred during request processing
                 response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR); // 500
                 response.getWriter().println("<p>500 Internal Server Error: " + e.getMessage() + "</p>");
             }
         }
     }
+
+    private Method findMethod(Class<?> clazz, String requestMethod, String action) throws NoSuchMethodException {
+        for (Method m : clazz.getDeclaredMethods()) {
+            if (m.getName().equals(action)) {
+                if (requestMethod.equalsIgnoreCase("GET") && m.isAnnotationPresent(GET.class)) {
+                    return m;
+                } else if (requestMethod.equalsIgnoreCase("POST") && m.isAnnotationPresent(AnnotationPost.class)) {
+                    return m;
+                }
+            }
+        }
+        return null;
+    }
+
+    private void handleReturnValue(Object returnValue,HttpServletRequest request, HttpServletResponse response) throws IOException,ServletException {
+        if (returnValue instanceof String) {
+            response.getWriter().println("Method found in " + (String) returnValue);
+        } else if (returnValue instanceof ModelView) {
+            ModelView modelView = (ModelView) returnValue;
+            for (Map.Entry<String, Object> entry : modelView.getData().entrySet()) {
+                request.setAttribute(entry.getKey(), entry.getValue());
+            }
+            RequestDispatcher dispatcher = request.getRequestDispatcher(modelView.getUrl());
+            dispatcher.forward(request, response);
+        } else {
+            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR); // 500
+            response.getWriter().println("<p>500 Internal Server Error: Data type not recognized.</p>");
+        }
+    }
+
 
     @Override
     protected void doGet(HttpServletRequest request, HttpServletResponse response)
@@ -170,7 +205,7 @@ public class FrontServlet extends HttpServlet {
                                     String valeur = method.getAnnotation(GET.class).value();
                                     if (urlMapping.containsKey(valeur)) {
                                         // 500 Internal Server Error - Duplicate URL mapping for GET
-                                        throw new Exception("<p> 500 Internal Server Error: Duplicate URL mapping for GET: " + valeur+ "</p>");
+                                        throw new Exception("<p> 500 Internal Server Error: Duplicate URL mapping for GET:"+valeur+"</p>");
                                     } else {
                                         urlMapping.put(valeur, map);
                                     }
@@ -180,7 +215,7 @@ public class FrontServlet extends HttpServlet {
                                     String valeur = method.getAnnotation(AnnotationPost.class).value();
                                     if (urlMapping.containsKey(valeur)) {
                                         // 500 Internal Server Error - Duplicate URL mapping for POST
-                                        throw new Exception("<p> 500 Internal Server Error: Duplicate URL mapping for POST: " + valeur+ "</p>");
+                                        throw new Exception("<p> 500 Internal Server Error: Duplicate URL mapping for POST: "+valeur+" </p>");
                                     } else {
                                         urlMapping.put(valeur, map);
                                     }
@@ -193,7 +228,7 @@ public class FrontServlet extends HttpServlet {
                 });
     }
 
-    public Object[] getMethodParameters(Method method, HttpServletRequest request, HttpServletResponse response) throws Exception {
+    public Object[] getMethodParameters(Method method, HttpServletRequest request, HttpServletResponse response, boolean isMultipart) throws Exception {
         Parameter[] parameters = method.getParameters();
         Object[] parameterValues = new Object[parameters.length];
         Map<String, Object> objectInstances = new HashMap<>();
@@ -205,8 +240,15 @@ public class FrontServlet extends HttpServlet {
             if (parameter.isAnnotationPresent(Parametre.class)) {
                 Parametre param = parameter.getAnnotation(Parametre.class);
                 String paramName = param.value();
-                String paramValue = request.getParameter(paramName);
-                parameterValues[i] = paramValue;
+                if (isMultipart && parameter.getType().equals(Part.class)) {
+                    // Retrieve file Part for file upload handling
+                    Part filePart=request.getPart(paramName);
+                    parameterValues[i] = filePart;
+                } else {
+                    // Regular parameter
+                    
+                    parameterValues[i] = request.getParameter(paramName);
+                }
 
             } else if (parameter.isAnnotationPresent(RequestObject.class)) {
                 while (parameterNames.hasMoreElements()) {
@@ -236,8 +278,13 @@ public class FrontServlet extends HttpServlet {
                 }
             } else if (parameter.getType().equals(MySession.class)) {
                 parameterValues[i] = new MySession(request.getSession());
+            } else if (parameter.getType().equals(Part.class)) {
+                if (isMultipart) {
+                    parameterValues[i] = request.getPart(parameter.getName());
+                }
             }
         }
         return parameterValues;
     }
+
 }
