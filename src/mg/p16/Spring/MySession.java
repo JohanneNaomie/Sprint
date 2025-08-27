@@ -20,5 +20,8 @@ public class MySession {
     public void delete(String key) {
         session.removeAttribute(key);
     }
+    public void setSession(HttpSession sess){
+        session=sess;
+    }
 }
 

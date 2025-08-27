@@ -2,7 +2,7 @@ package mg.p16.Spring;
 
 import mg.p16.Spring.Rest_Api;
 
-
+import jakarta.servlet.http.HttpSession;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.lang.reflect.Field;
@@ -23,6 +23,11 @@ import java.util.Map;
 
 import com.google.gson.Gson;
 
+import java.util.Set;
+import java.util.HashSet;
+import java.util.Arrays;
+
+
 import jakarta.servlet.http.Part;
 import jakarta.servlet.annotation.MultipartConfig;
 import jakarta.servlet.ServletConfig;
@@ -31,19 +36,23 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletRequestWrapper;
 //clarify 
 
 @MultipartConfig()
 public class FrontServlet extends HttpServlet {
     private String packageName;
+    private String modelsName;
     private static List<String> controllerNames = new ArrayList<>();
     private HashMap<String, Mapping> urlMapping = new HashMap<>();
     String error = "";
+
 
     @Override
     public void init(ServletConfig config) throws ServletException {
         super.init(config);
         packageName = config.getInitParameter("packageControllerName");
+        modelsName = config.getInitParameter("modelsName");
         try {
             if (packageName == null || packageName.isEmpty()) {
                 // 500 Internal Server Error - Package name not specified
@@ -54,9 +63,82 @@ public class FrontServlet extends HttpServlet {
             error = e.getMessage();
         }
     }
+    private void scanControllers(String packageName) throws Exception {
+        ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
+        String path = packageName.replace('.', '/');
+        URL resource = classLoader.getResource(path);
+
+        if (resource == null) {
+            // 500 Internal Server Error - Package not found
+            throw new Exception("</p> 500 Internal Server Error: Specified package does not exist: " + packageName+ "</p>");
+        }
+        //added
+        // Get allowed roles from context-param in web.xml
+        String allowedRolesFromConfig = getServletContext().getInitParameter("allowedRoles");
+        Set<String> configRoles = new HashSet<>(Arrays.asList(allowedRolesFromConfig.split(",")));
+
+        Path classPath = Paths.get(resource.toURI());
+        Files.walk(classPath)
+                .filter(f -> f.toString().endsWith(".class"))
+                .forEach(f -> {
+                    String className = packageName + "." + f.getFileName().toString().replace(".class", "");
+                    try {
+                        Class<?> clazz = Class.forName(className);
+                        if (clazz.isAnnotationPresent(ControllerAnnotation.class)
+                                && !Modifier.isAbstract(clazz.getModifiers())) {
+                            controllerNames.add(clazz.getSimpleName());
+                            Method[] methods = clazz.getMethods();
+                            VerbAction vb=null;
+                            for (Method method : methods) {
+                                if (method.isAnnotationPresent(GET.class)) {
+                                    vb = new VerbAction(method.getName(),"GET");
+                                    Mapping map = new Mapping(className, vb);
+                                    String valeur = method.getAnnotation(GET.class).value();
+                                    if (urlMapping.containsKey(valeur)) {
+                                        // 500 Internal Server Error - Duplicate URL mapping for GET
+                                        throw new Exception("<p> 500 Internal Server Error: Duplicate URL mapping for GET:"+valeur+"</p>");
+                                    } else {
+                                        urlMapping.put(valeur, map);
+                                    }
+                                } else if (method.isAnnotationPresent(AnnotationPost.class)) {
+                                    vb = new VerbAction(method.getName(), "POST");
+                                    Mapping map = new Mapping(className, vb);
+                                    String valeur = method.getAnnotation(AnnotationPost.class).value();
+                                    if (urlMapping.containsKey(valeur)) {
+                                        // 500 Internal Server Error - Duplicate URL mapping for POST
+                                        throw new Exception("<p> 500 Internal Server Error: Duplicate URL mapping for POST: "+valeur+" </p>");
+                                    } else {
+                                        urlMapping.put(valeur, map);
+                                    }
+                                }
+                                if (method.isAnnotationPresent(Authorization.class)) {
+                                    Authorization auth = method.getAnnotation(Authorization.class);
+                                    String []allowedRoles = auth.roles(); // Values from the annotation
+
+                                    // Ensure all roles in the annotation are valid
+                                    for (String role : allowedRoles) {
+                                        if (!configRoles.contains(role)) {
+                                            throw new Exception("<p> 500 Internal Server Error: Unauthorized role found in method "
+                                                    + method.getName() + ": " + role + "</p>");
+                                        }
+                                    }
+
+                                    //add to the verbAction
+                                    vb.setAllowedRoles(allowedRoles);
+                                }
+                            }
+                        }
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        
+                    }
+                });
+    }
 
     protected void processRequest(HttpServletRequest request, HttpServletResponse response)
-            throws ServletException, IOException {
+            throws ServletException, IOException,Exception{
+        
+    
         // Check if the request is a multipart request
         boolean isMultipart = request.getContentType() != null && request.getContentType().startsWith("multipart/form-data");
         
@@ -79,7 +161,38 @@ public class FrontServlet extends HttpServlet {
             try {
                 Mapping mapping = urlMapping.get(controllerSearched);
                 String methodVerb = mapping.getVerbAction().getVerb();
+                String[] allowed = mapping.getVerbAction().getAllowedRoles();
                 String requestMethod = request.getMethod();
+
+
+                // Get user's role from session
+                if(allowed!=null){ //annoted Authorization 
+                
+                    try{
+                        HttpSession session = request.getSession();
+                        MySession mysess=new MySession(session);
+                        String expressionRole = getServletContext().getInitParameter("roleSessionAttribute");
+                        System.out.println(expressionRole);
+                        String userRoleSession=(String)mysess.get(expressionRole); //in session
+                        if (userRoleSession==null) {
+                            throw new Exception("<p> 500 Internal Server Error:role in session non-existant </p>");
+                        }
+                        String publi="PUBLIC";
+                        boolean match=Arrays.stream(allowed).noneMatch(publi::equals); //tsisy public
+
+                        if(match){ //public tsy mentionned mila checkena
+                            // Check if userRole is in the allowed roles
+                            if (Arrays.stream(allowed).noneMatch(userRoleSession::equals)) {
+                                throw new Exception("<p> 403 Forbidden: User role " + userRoleSession + " is not authorized </p>");
+                            }
+                        }
+
+                        
+                    }catch(Exception e){
+                        e.printStackTrace();
+                        throw e;
+                    }
+                }
                 
 
                 if (!requestMethod.equalsIgnoreCase(methodVerb)) {
@@ -89,6 +202,7 @@ public class FrontServlet extends HttpServlet {
 
                 Class<?> clazz = Class.forName(mapping.getClassName());
                 Object object = clazz.getDeclaredConstructor().newInstance();
+                injectMySession(object,request.getSession());
                 Method method = findMethod(clazz, requestMethod, mapping.getVerbAction().getAction());
 
                 if (method == null) {
@@ -140,8 +254,26 @@ public class FrontServlet extends HttpServlet {
             for (Map.Entry<String, Object> entry : modelView.getData().entrySet()) {
                 request.setAttribute(entry.getKey(), entry.getValue());
             }
-            // RequestDispatcher dispatcher = request.getRequestDispatcher(modelView.getUrl());
-            // dispatcher.forward(request, response);
+            List<MyExceptions> errors = (List<MyExceptions>) request.getAttribute("errors");
+            String lien="";
+
+            String requestMethod = request.getMethod();
+            HttpServletRequest wrapped = new HttpServletRequestWrapper(request) {
+                    @Override
+                    public String getMethod() {
+                        return "GET";
+                    }
+                };
+
+            if (errors != null && !errors.isEmpty()) {
+                RequestDispatcher dispatcher = wrapped.getRequestDispatcher(modelView.getError());
+                dispatcher.forward(wrapped, response);
+                return; // Ensure to return here to avoid forwarding twice
+            }
+
+            RequestDispatcher dispatcher = wrapped.getRequestDispatcher(modelView.getUrl());
+            dispatcher.forward(wrapped, response);
+
         } else {
             response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR); // 500
             response.getWriter().println("<p>500 Internal Server Error: Data type not recognized.</p>");
@@ -151,72 +283,33 @@ public class FrontServlet extends HttpServlet {
 
     @Override
     protected void doGet(HttpServletRequest request, HttpServletResponse response)
-            throws ServletException, IOException {
-        processRequest(request, response);
+            throws ServletException, IOException{
+        PrintWriter out = response.getWriter();
+       try{
+            processRequest(request, response);
+       }catch(Exception e){
+            out.println(e.getMessage());
+       }
+        out.close();
     }
 
     @Override
     protected void doPost(HttpServletRequest request, HttpServletResponse response)
-            throws ServletException, IOException {
-        processRequest(request, response);
-    }
-
-    private void scanControllers(String packageName) throws Exception {
-        ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
-        String path = packageName.replace('.', '/');
-        URL resource = classLoader.getResource(path);
-
-        if (resource == null) {
-            // 500 Internal Server Error - Package not found
-            throw new Exception("</p> 500 Internal Server Error: Specified package does not exist: " + packageName+ "</p>");
-        }
-
-        Path classPath = Paths.get(resource.toURI());
-        Files.walk(classPath)
-                .filter(f -> f.toString().endsWith(".class"))
-                .forEach(f -> {
-                    String className = packageName + "." + f.getFileName().toString().replace(".class", "");
-                    try {
-                        Class<?> clazz = Class.forName(className);
-                        if (clazz.isAnnotationPresent(ControllerAnnotation.class)
-                                && !Modifier.isAbstract(clazz.getModifiers())) {
-                            controllerNames.add(clazz.getSimpleName());
-                            Method[] methods = clazz.getMethods();
-
-                            for (Method method : methods) {
-                                if (method.isAnnotationPresent(GET.class)) {
-                                    VerbAction vb = new VerbAction(method.getName(), "GET");
-                                    Mapping map = new Mapping(className, vb);
-                                    String valeur = method.getAnnotation(GET.class).value();
-                                    if (urlMapping.containsKey(valeur)) {
-                                        // 500 Internal Server Error - Duplicate URL mapping for GET
-                                        throw new Exception("<p> 500 Internal Server Error: Duplicate URL mapping for GET:"+valeur+"</p>");
-                                    } else {
-                                        urlMapping.put(valeur, map);
-                                    }
-                                } else if (method.isAnnotationPresent(AnnotationPost.class)) {
-                                    VerbAction vb = new VerbAction(method.getName(), "POST");
-                                    Mapping map = new Mapping(className, vb);
-                                    String valeur = method.getAnnotation(AnnotationPost.class).value();
-                                    if (urlMapping.containsKey(valeur)) {
-                                        // 500 Internal Server Error - Duplicate URL mapping for POST
-                                        throw new Exception("<p> 500 Internal Server Error: Duplicate URL mapping for POST: "+valeur+" </p>");
-                                    } else {
-                                        urlMapping.put(valeur, map);
-                                    }
-                                }
-                            }
-                        }
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    }
-                });
+            throws ServletException, IOException{
+        PrintWriter out = response.getWriter();
+       try{
+            processRequest(request, response);
+       }catch(Exception e){
+            out.println(e.getMessage());
+       }
+        out.close();
     }
 
     public Object[] getMethodParameters(Method method, HttpServletRequest request, HttpServletResponse response, boolean isMultipart) throws Exception {
         Parameter[] parameters = method.getParameters();
         Object[] parameterValues = new Object[parameters.length];
         Map<String, Object> objectInstances = new HashMap<>();
+
         Enumeration<String> parameterNames = request.getParameterNames();
 
         for (int i = 0; i < parameters.length; i++) {
@@ -231,7 +324,6 @@ public class FrontServlet extends HttpServlet {
                     parameterValues[i] = filePart;
                 } else {
                     // Regular parameter
-                    
                     parameterValues[i] = request.getParameter(paramName);
                 }
 
@@ -243,7 +335,7 @@ public class FrontServlet extends HttpServlet {
                         String className = parts[0];
                         String attributeName = parts[1];
 
-                        String fullClassName = "mg.p16.models." + className;
+                        String fullClassName = modelsName+ "." + className;
                         Object instance = objectInstances.get(fullClassName);
                         if (instance == null) {
                             Class<?> clazz = Class.forName(fullClassName);
@@ -260,122 +352,119 @@ public class FrontServlet extends HttpServlet {
 
                         parameterValues[i] = instance;
 
-                        // Validate the constructed object
-                        List<MyExceptions> validationErrors = validate(instance,response);
-
-                        // if (!validationErrors.isEmpty()) {
-                        //     throw new MyValidationException("Validation failed", validationErrors);
-                        // }
-
-                        PrintWriter out = response.getWriter();
-
-                        out.println("<html><body>");
-                        out.println("<h3>Validation Errors:</h3>");
-
-                        if (validationErrors.isEmpty()) {
-                            out.println("<p>No validation errors found.</p>");
-                        } else {
-                            out.println("<ul>");
-                            for (MyExceptions exception : validationErrors) {
-                                out.println("<li>");
-                                out.println("Field: " + exception.getField() + " - Error: " + exception.getError());
-                                out.println("</li>");
-                            }
-                            out.println("</ul>");
+                        // Perform validation
+                        ValidationResult val = validate(instance);
+                        if (!val.getErrors().isEmpty()) {                            
+                            // Set the attributes for errors and field values
+                            request.setAttribute("errors", val.getErrors());
+                            request.setAttribute("fieldValues", val.getFieldValues());
                         }
-
-                        out.println("</body></html>");
-                        out.close();
                     }
                 }
-            } else if (parameter.getType().equals(MySession.class)) {
-                parameterValues[i] = new MySession(request.getSession());
-            } else if (parameter.getType().equals(Part.class)) {
-                if (isMultipart) {
-                    parameterValues[i] = request.getPart(parameter.getName());
-                }
-            }
+            } 
+            // else if (parameter.getType().equals(MySession.class)) {
+            //     parameterValues[i] = new MySession(request.getSession());
+            // } 
+            // else if (parameter.getType().equals(Part.class)) {
+            //     if (isMultipart) {
+            //         parameterValues[i] = request.getPart(parameter.getName());
+            //     }
+            // }
         }
         return parameterValues;
     }
-    public static List<MyExceptions> validate(Object obj,HttpServletResponse response) throws Exception{
+
+    public static ValidationResult validate(Object obj) throws Exception {
         List<MyExceptions> errors = new ArrayList<>();
-
+        Map<String, String> fieldValues = new HashMap<>();
         Field[] fields = obj.getClass().getDeclaredFields();
-        int i=0;
-        PrintWriter out = null;
-        for (Field field : fields) {
 
-            out.println(i);
-            
+        // Loop through each field and validate
+        for (Field field : fields) {
             field.setAccessible(true);
+
             try {
                 Object value = field.get(obj);
-                out = response.getWriter();
+                String fieldValue = value != null ? value.toString() : "";
 
-                // Check @Min
+                // Store the field value
+                fieldValues.put(field.getName(), fieldValue);
+
+                // Validate @Contains annotation
+                Contains contains = field.getAnnotation(Contains.class);
+                if (contains != null && value instanceof String) {
+                    String strValue = (String) value;
+                    if (!strValue.contains(contains.value())) {
+                        errors.add(new MyExceptions(field.getName(),
+                                contains.message(),
+                                "Provide a value containing '" + contains.value() + "'.",
+                                fieldValue));
+                    }
+                }
+
+                // Validate other annotations
                 Min min = field.getAnnotation(Min.class);
                 if (min != null && value instanceof Integer) {
-                    
-                    //it enters here 
-                    Integer intValue = (Integer) value;
-                    errors.add(new MyExceptions(field.getName(),intValue+"val","test exception ")); //works
-                    errors.add(new MyExceptions(field.getName(),intValue + "<"+ min.value(),"test exception "));
-
-                    out.println(intValue + "<"+ min.value());
+                    int intValue = (Integer) value;
                     if (intValue < min.value()) {
-                        out.println("in min");
-                        //doesnt enter here after it has taken an exception from an annotation
                         errors.add(new MyExceptions(field.getName(),
                                 "Value is less than minimum allowed.",
-                                "Provide a value >= " + min.value()));
+                                "Provide a value >= " + min.value(),
+                                fieldValue));
                     }
                 }
 
-                // Check @Max
                 Max max = field.getAnnotation(Max.class);
                 if (max != null && value instanceof Integer) {
-                    Integer intValue = (Integer) value;
-                    errors.add(new MyExceptions(field.getName(),intValue+"value","test exception "));
-                    errors.add(new MyExceptions(field.getName(),intValue + ">"+max.value(),"test exception "));
-
-                    out.println(intValue + "<"+ max.value());
-
+                    int intValue = (Integer) value;
                     if (intValue > max.value()) {
-                        out.println("in max");
                         errors.add(new MyExceptions(field.getName(),
                                 "Value is greater than maximum allowed.",
-                                "Provide a value <= " + max.value()));
+                                "Provide a value <= " + max.value(),
+                                fieldValue));
                     }
                 }
 
-                // Check @StartsWith
                 StartsWith startsWith = field.getAnnotation(StartsWith.class);
                 if (startsWith != null && value instanceof String) {
                     String strValue = (String) value;
-                    errors.add(new MyExceptions(field.getName(),strValue,"test exception ")); //works
-                    errors.add(new MyExceptions(field.getName(),startsWith.value(),"test exception ")); //works
-                    out.println("starts with "+ startsWith.value());
                     if (!strValue.startsWith(startsWith.value())) {
-                        out.println("in starts with");
                         errors.add(new MyExceptions(field.getName(),
                                 "Value does not start with the required prefix.",
-                                "Provide a value starting with '" + startsWith.value() + "'"));//works 
+                                "Provide a value starting with '" + startsWith.value() + "'",
+                                fieldValue));
                     }
                 }
-                i++;  
+
             } catch (IllegalAccessException e) {
                 errors.add(new MyExceptions(field.getName(),
                         "Unable to access field value.",
-                        "Ensure the field is accessible."));
+                        "Ensure the field is accessible.",
+                        ""));
             }
-            
         }
-        if(out!=null){
-            out.close();
+
+        return new ValidationResult(errors, fieldValues);
+    }
+
+    private void injectMySession(Object controllerInstance, HttpSession httpSession) {
+        Field[] fields = controllerInstance.getClass().getDeclaredFields();
+        for (Field field : fields) {
+            if (field.getType().isAssignableFrom(MySession.class)) {
+                try {
+                    field.setAccessible(true);
+                    MySession mySession = (MySession) field.get(controllerInstance);
+                    if (mySession == null) {
+                        mySession = new MySession(httpSession);
+                        field.set(controllerInstance, mySession);
+                    } else {
+                        mySession.setSession(httpSession);
+                    }
+                } catch (IllegalAccessException e) {
+                    e.printStackTrace();
+                }
+            }
         }
-        
-        return errors;
     }
 
 
